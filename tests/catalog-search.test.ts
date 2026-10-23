@@ -1,0 +1,14 @@
+import { PGlite } from '@electric-sql/pglite';
+import { afterAll,beforeAll,describe,expect,it,vi } from 'vitest';
+const state=vi.hoisted(()=>({db:null as unknown as PGlite}));
+vi.mock('../src/lib/db/client',()=>({query:async(sql:string,params:unknown[]=[])=> (await state.db.query(sql,params)).rows}));
+import { searchProducts } from '../src/lib/catalog';
+beforeAll(async()=>{state.db=new PGlite();await state.db.exec(`CREATE TABLE products (product_id text PRIMARY KEY,persian_title text,brand_name text,category_name text,model text,image_urls jsonb DEFAULT '[]',specs jsonb DEFAULT '[]',search_text text,search_document tsvector,min_price_toman bigint,max_price_toman bigint,offer_count int DEFAULT 1);CREATE TABLE shops (shop_id text PRIMARY KEY,payment_options jsonb,lat float,lon float,location_label text);CREATE TABLE offers (product_id text,price_toman bigint,shop_id text);INSERT INTO shops VALUES ('unknown','[{"channel":"unknown"}]',35.7,51.4,'مرکز'),('credit','[{"channel":"in_person"}]',35.7,51.4,'مرکز');INSERT INTO products(product_id,persian_title,category_name,search_text,search_document) VALUES ('p1','لپتاپ لنوو','لپ تاپ و نوت بوک','لپتاپ لنوو',to_tsvector('simple','لپتاپ لنوو')),('p2','هدفون انکر','هدفون','هدفون انکر',to_tsvector('simple','هدفون انکر'));INSERT INTO offers VALUES ('p1',1000,'unknown'),('p2',2000,'credit');INSERT INTO products(product_id,persian_title,category_name,search_text,search_document) VALUES ('p3','نوت بوک سوم','لپ تاپ و نوت بوک','نوت بوک سوم',to_tsvector('simple','نوت بوک سوم')),('p4','کامپیوتر قابل حمل','لپ تاپ و نوت بوک','کامپیوتر قابل حمل',to_tsvector('simple','کامپیوتر قابل حمل'));INSERT INTO offers VALUES ('p3',1000,'unknown'),('p3',2000,'credit'),('p4',1200,'credit');`);});
+afterAll(async()=>state.db.close());
+describe('real PostgreSQL full-text query parameter binding',()=>{
+  it('filters the entire candidate pool and requires credit and budget on the same offer',async()=>{const r=await searchProducts({category:'لپ تاپ و نوت بوک',maxPrice:1500,filters:{installmentOnly:true}});expect(r.data.map(p=>p.product_id)).toEqual(['p4']);});
+  it('handles conversational queries whose strict token intersection has no matches',async()=>{const r=await searchProducts({query:'توی تهران لپتاپ هارو کجا به صورت خرید اعتباری میدن'});expect(r.data.map(p=>p.product_id)).toEqual(['p1']);});
+  it('returns a genuine empty result for an entirely unmatched phrase',async()=>{expect((await searchProducts({query:'عبارت کاملا ناموجود'})).total).toBe(0);});
+  it('counts an empty later page with budget and category parameters safely',async()=>{const r=await searchProducts({query:'لپتاپ لنوو',category:'لپ تاپ و نوت بوک',maxPrice:1500,page:2,limit:1});expect(r.total).toBe(1);expect(r.data).toEqual([]);});
+  it('retains hard price bounds when using relaxed token matching',async()=>{const r=await searchProducts({query:'لپتاپ ارزان',maxPrice:500});expect(r.data).toEqual([]);});
+});

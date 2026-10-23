@@ -1,0 +1,20 @@
+import { PGlite } from '@electric-sql/pglite';
+import { vector } from '@electric-sql/pglite/vector';
+import { afterAll,afterEach,beforeAll,beforeEach,describe,expect,it,vi } from 'vitest';
+const state=vi.hoisted(()=>({db:null as unknown as PGlite}));
+vi.mock('../src/lib/db/client',()=>({database:async()=>state.db,query:async(sql:string,params:unknown[]=[])=> (await state.db.query(sql,params)).rows}));
+import { embeddingConfig } from '../src/lib/retrieval/core';
+import { createEmbeddingIndex,embeddingCount,nearestProducts,registerSpace,reserveEmbeddingUsage,saveProductEmbedding } from '../src/lib/retrieval/store';
+import { createEmbeddings } from '../src/lib/retrieval/client';
+import { indexProducts } from '../src/lib/retrieval/ingest';
+const config=embeddingConfig({EMBEDDING_API_KEY:'offline-test-key',EMBEDDING_DIMENSIONS:'2',EMBEDDING_DAILY_REQUEST_LIMIT:'2',EMBEDDING_DAILY_INPUT_LIMIT:'10000'});
+beforeAll(async()=>{state.db=new PGlite({extensions:{vector}});await state.db.exec(`CREATE TABLE products (product_id text PRIMARY KEY,persian_title text,brand_name text,model text,category_name text,specs jsonb);INSERT INTO products VALUES ('p1','هدفون اول','Anker','R50i','هدفون','[]'),('p2','هدفون دوم','QCY','T13','هدفون','[]');`);await registerSpace(config);});
+beforeEach(async()=>{await state.db.exec('DELETE FROM product_embeddings;DELETE FROM embedding_usage_daily;DELETE FROM embedding_index_jobs;');});
+afterEach(()=>vi.unstubAllGlobals());afterAll(async()=>state.db.close());
+describe('temporary pgvector store — no external APIs',()=>{
+  it('finds genuine stored ids within exactly one model/dimension namespace',async()=>{await saveProductEmbedding(config,'p1','hash1',[1,0]);await saveProductEmbedding(config,'p2','hash2',[0,1]);await createEmbeddingIndex(config);expect((await nearestProducts(config,[1,0])).map(p=>p.product_id)).toEqual(['p1']);const other=embeddingConfig({EMBEDDING_MODEL:'text-embedding-3-large',EMBEDDING_DIMENSIONS:'2'});expect(await embeddingCount(other)).toBe(0);});
+  it('indexes 3072-dimensional large vectors through half precision without mixing spaces',async()=>{const large=embeddingConfig({EMBEDDING_MODEL:'text-embedding-3-large'});await registerSpace(large);const embedding=Array.from({length:3072},(_,i)=>i===0?1:0);await saveProductEmbedding(large,'p1','large-hash',embedding);await createEmbeddingIndex(large);expect((await nearestProducts(large,embedding))[0].product_id).toBe('p1');});
+  it('atomically blocks concurrent requests over the daily cap',async()=>{const result=await Promise.allSettled([reserveEmbeddingUsage(config,2),reserveEmbeddingUsage(config,2),reserveEmbeddingUsage(config,2)]);expect(result.filter(r=>r.status==='fulfilled')).toHaveLength(2);expect(result.filter(r=>r.status==='rejected')).toHaveLength(1);});
+  it('does not send malformed embeddings to the store or leak a provider body',async()=>{const fetcher=vi.fn(async()=>Response.json({error:'secret-do-not-expose'},{status:401}));vi.stubGlobal('fetch',fetcher);await expect(createEmbeddings(['هدفون'],config)).rejects.toThrow('embedding_auth');expect(await embeddingCount(config)).toBe(0);});
+  it('dry-runs without paid calls and resumes ingestion without reembedding unchanged products',async()=>{const fetcher=vi.fn(async(_url:unknown,init:RequestInit)=>{const body=JSON.parse(init.body as string);return Response.json({data:body.input.map((_:string,index:number)=>({index,embedding:index===0?[1,0]:[0,1]})),usage:{total_tokens:12}});});vi.stubGlobal('fetch',fetcher);const options={execute:false,limit:2,batchSize:2,maxRequests:1};const dry=await indexProducts(config,options);expect(dry.embedded).toBe(2);expect(fetcher).not.toHaveBeenCalled();await indexProducts(config,{...options,execute:true});expect(await embeddingCount(config)).toBe(2);const again=await indexProducts(config,{...options,execute:true});expect(again.embedded).toBe(0);expect(fetcher).toHaveBeenCalledTimes(1);});
+});

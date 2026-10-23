@@ -1,0 +1,16 @@
+/* Only the current assistant response is animated; persisted messages stay still. */
+.in-person-app .message.assistant .assistant-avatar{display:flex;align-items:flex-start;justify-content:center;width:30px;height:36px;margin-top:2px;background:transparent;flex-shrink:0}
+.in-person-app .message.assistant .assistant-avatar .chat-mark{width:28px;height:32px}
+.in-person-app .message.assistant .message-content{min-width:0;max-width:100%}
+.in-person-app .message.assistant .message-text{line-height:2.15}
+.response-progress{display:flex;align-items:center;gap:12px;padding-block:12px;color:#c5a3ae;font-size:12px;min-height:44px;line-height:1.9}
+.response-progress .text-button{margin-inline-start:auto;flex-shrink:0;min-height:36px;padding-inline:8px}
+.response-incomplete{font-size:11px;line-height:2;color:#efc68d;border-inline-start:2px solid #906c3f;padding-inline-start:10px;margin-block:12px}
+.in-person-app .message .mode-label{font-size:10px;line-height:1.9;overflow-wrap:anywhere;color:var(--chat-muted);margin-top:8px}
+@media(max-width:600px){.in-person-app .message.assistant{gap:8px}.in-person-app .message.assistant .assistant-avatar{width:24px;height:30px}.in-person-app .message.assistant .assistant-avatar .chat-mark{width:23px;height:27px}.response-progress{font-size:11px}.response-incomplete,.in-person-app .message .mode-label{font-size:10px}}
+@media(prefers-reduced-motion:reduce){.in-person-app .chat-scroll{scroll-behavior:auto}}
+
+.search-progress-spinner{flex-shrink:0;animation:search-progress-spin 1.1s linear infinite}
+@keyframes search-progress-spin{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.search-progress-spinner{animation:none}}
+.chat-header-links{display:flex;align-items:center;gap:4px;flex-wrap:wrap}

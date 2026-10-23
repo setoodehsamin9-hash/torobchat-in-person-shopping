@@ -1,0 +1,13 @@
+import { afterEach,describe,expect,it,vi } from 'vitest';
+const f=vi.hoisted(()=>({searchProducts:vi.fn(),getProduct:vi.fn(),getProductOffers:vi.fn(),embeddingCount:vi.fn(),nearestProducts:vi.fn(),queryEmbedding:vi.fn()}));
+vi.mock('../src/lib/catalog',()=>({searchProducts:f.searchProducts,getProduct:f.getProduct,getProductOffers:f.getProductOffers}));
+vi.mock('../src/lib/retrieval/store',()=>({embeddingCount:f.embeddingCount,nearestProducts:f.nearestProducts}));
+vi.mock('../src/lib/retrieval/client',()=>({queryEmbedding:f.queryEmbedding}));
+import { hybridSearch } from '../src/lib/retrieval/search';
+const p=(id:string)=>({product_id:id,persian_title:id,brand_name:null,model:null,category_name:null,specs:[],image_urls:[],offer_count:2,min_price_toman:1,max_price_toman:2});
+afterEach(()=>{vi.unstubAllEnvs();vi.resetAllMocks();});
+describe('hybrid factual retrieval',()=>{
+  it('makes no paid query when the index is empty and returns honest lexical coverage',async()=>{vi.stubEnv('EMBEDDING_API_KEY','test-only');f.embeddingCount.mockResolvedValue(0);f.searchProducts.mockResolvedValue({data:[p('p1')],total:1,page:1,limit:12});const r=await hybridSearch({query:'هدفون'});expect(f.queryEmbedding).not.toHaveBeenCalled();expect(r.retrieval.mode).toBe('index_empty');expect(r.data[0].product_id).toBe('p1');});
+  it('requires all hard constraints on a linked offer before sending semantic products to the LLM',async()=>{vi.stubEnv('EMBEDDING_API_KEY','test-only');f.embeddingCount.mockResolvedValue(2);f.queryEmbedding.mockResolvedValue([1,0]);f.nearestProducts.mockResolvedValue([{product_id:'outside',similarity:.9},{product_id:'allowed',similarity:.8}]);f.searchProducts.mockResolvedValue({data:[],total:0,page:1,limit:12});f.getProduct.mockImplementation(async id=>p(id));f.getProductOffers.mockImplementation(async id=>({data:id==='allowed'?[{offer_id:'real'}]:[]}));const r=await hybridSearch({query:'مناسب مکالمه'},{maxPrice:2000000,lat:35.7,lng:51.4,radiusKm:2,installmentOnly:true});expect(r.data.map(x=>x.product_id)).toEqual(['allowed']);expect(f.getProductOffers).toHaveBeenCalledWith('allowed',expect.objectContaining({maxPrice:2000000,radiusKm:2,installmentOnly:true,limit:1}));});
+  it('falls back without leaking upstream error details',async()=>{vi.stubEnv('EMBEDDING_API_KEY','test-only');f.embeddingCount.mockResolvedValue(2);f.queryEmbedding.mockRejectedValue(new Error('secret-token-provider-error'));f.searchProducts.mockResolvedValue({data:[p('p1')],total:1,page:1,limit:12});const r=await hybridSearch({query:'گوشی'});expect(r.retrieval.mode).toBe('lexical_fallback');expect(JSON.stringify(r)).not.toContain('secret-token');});
+});

@@ -1,0 +1,10 @@
+import fs from 'node:fs/promises';
+import path from 'node:path';
+import {z} from 'zod';
+import {ContactService,type ContactOptions} from './service';
+import {contactStore} from './store';
+const registrySchema=z.array(z.object({shopId:z.string().min(1).max(200),destination:z.string().regex(/^\+[1-9]\d{7,14}$/),verifiedAt:z.iso.datetime({offset:true}),verificationReference:z.string().min(1).max(1000),permission:z.literal(true)}).strict()).max(10000).refine(list=>new Set(list.map(row=>row.shopId)).size===list.length,'Duplicate shop contacts');
+function integer(value:string|undefined){if(!value||!/^\d+$/.test(value))return undefined;const n=Number(value);return Number.isSafeInteger(n)?n:undefined;}
+/** Operator-managed file only. Public requests cannot create or verify contacts. */
+export async function contactOptions():Promise<ContactOptions>{const env=process.env;const options:ContactOptions={liveEnabled:env.CONTACT_REAL_MODE==='true',gatewayUrl:env.CONTACT_GATEWAY_URL,gatewayToken:env.CONTACT_GATEWAY_TOKEN,callbackSecret:env.CONTACT_CALLBACK_SECRET,voiceMaxCostToman:integer(env.CONTACT_VOICE_MAX_COST_TOMAN),smsMaxCostToman:integer(env.CONTACT_SMS_MAX_COST_TOMAN),dailyCostToman:integer(env.CONTACT_DAILY_MAX_COST_TOMAN),dailyJobs:integer(env.CONTACT_DAILY_MAX_JOBS)??100,registry:[]};if(!options.liveEnabled||!env.CONTACT_REGISTRY_PATH)return options;const file=path.resolve(env.CONTACT_REGISTRY_PATH);try{const info=await fs.lstat(file);if(!info.isFile()||info.isSymbolicLink()||info.size>2_000_000||(info.mode&0o077)!==0)throw Error('Unsafe registry file');const real=await fs.realpath(file),project=await fs.realpath(process.cwd()),raw=path.resolve(project,'data/raw');if(real===project||real.startsWith(project+path.sep))throw Error('Private registry must be outside the source project');if(real===raw||real.startsWith(raw+path.sep))throw Error('Dataset directory cannot be a contact registry');options.registry=registrySchema.parse(JSON.parse(await fs.readFile(real,'utf8')));}catch{options.registry=[];}return options;}
+export async function contactService(){return new ContactService(await contactStore(),await contactOptions());}

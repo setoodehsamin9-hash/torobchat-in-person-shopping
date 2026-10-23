@@ -1,0 +1,5 @@
+import {contactService} from '../src/lib/contact/config';
+import {dispatchOne,httpsGatewayTransport} from '../src/lib/contact/gateway';
+/** Explicit one-shot worker. Schedule externally; never runs inside an HTTP request. */
+async function main(){if(!process.argv.includes('--dispatch-approved-live')){console.log('Contact worker dry run: live dispatch requires --dispatch-approved-live and CONTACT_REAL_MODE=true. Simulation advances when its owner views jobs.');return;}const service=await contactService();if(!service.options.liveEnabled)throw Error('Live mode is disabled. No dispatch attempted.');const claimed=await dispatchOne(service,httpsGatewayTransport(service.options));console.log(claimed?'One approved job processed; inspect its persistent status.':'No eligible approved job was dispatched.');}
+main().then(()=>process.exit(0)).catch(()=>{console.error('Contact worker did not finish. Inspect persistent job state before any manual action; uncertain dispatch must never be retried automatically.');process.exit(1);});
